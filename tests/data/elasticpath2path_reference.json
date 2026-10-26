@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/50-Cent/ElasticPath2Path",
+  "commit": "7e2c6926d8c6723593df4b041e31517767a63938",
+  "sha256": {
+    "curve_to_q.m": "ebdadae0072e99cc50337f28791402463157a6bf9936b348f5524cbb785b5260",
+    "q_to_curve.m": "796071b092cb2025d1819bda3d925bfe398f76ed5d35188c185679bd52b966ec",
+    "pathresample.m": "ef31197b95a778dfbdf2561b282d5cfc6aea31fb9430d837d5f84f5100d31a82",
+    "visualMorphingNeuron.m": "352467c847e91be2a81042da450ab4bfdab1462d12f76271e7f3a2d1a29c2c3c"
+  },
+  "reference": "Unmodified curve_to_q, q_to_curve, pathresample in Octave; numerical frame assembly from visualMorphingNeuron, excluding video/plotting",
+  "real_neurons": [
+    "Cell_type/Granule/cho/CNG version/L0578-slide-2-section-6-left-1.CNG.swc",
+    "Cell_type/Granule/cho/CNG version/L0579-slide-2-section-5-left-side-1.CNG.swc"
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "engine": "GNU Octave 11.1.0",
+  "source": "Unmodified repository MATLAB functions; histcounts integer-degree shim for Octave",
+  "compatibility": "Original inter/intra tortuosity calculation; pair indices converted to zero-based",
+  "neurons": [
+    {
+      "archive": "Intercellular_data.zip",
+      "member": "Cell_type/Ganglion/badea/CNG version/Badea2011Brn3aONOFF.CNG.swc"
+    },
+    {
+      "archive": "Intercellular_data.zip",
+      "member": "Cell_type/Granule/cho/CNG version/L0578-slide-2-section-6-left-1.CNG.swc"
+    },
+    {
+      "archive": "Intracellular_data.zip",
+      "member": "Dataset1_Pyramidal_cell_3D/Motor_1/chandrashekar/CNG version/2014-06-24-N1_All.CNG.swc"
+    },
+    {
+      "archive": "Intracellular_data.zip",
+      "member": "Dataset1_Pyramidal_cell_3D/Motor_2/defelipe/CNG version/31.CNG.swc"
+    }
+  ]
+}
