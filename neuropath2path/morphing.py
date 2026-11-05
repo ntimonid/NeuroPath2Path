@@ -28,6 +28,8 @@ class PathMorph:
     times: np.ndarray            # morph fractions in [0, 1]
     frames: np.ndarray           # (frames, sample points, dimensions)
     method: str
+    source_curve: np.ndarray | None = None
+    target_curve: np.ndarray | None = None
 
 
 @dataclass(frozen=True)
@@ -45,6 +47,8 @@ class NeuronMorph:
     source_axis_order: np.ndarray
     target_axis_order: np.ndarray
     method: str
+    arbor: str = "dendrite"
+    path_kinds: tuple[str, ...] = ()  # one compartment label per matched pair
 
 
 def _curve(points: np.ndarray) -> np.ndarray:
@@ -133,7 +137,7 @@ def _interpolate_elasticpath2path(first, second, times, samples, center):
         recovered = q_to_curve((1 - alpha) * qa + alpha * qb, dt)
         deviation = (1 - alpha) * deviation_a + alpha * deviation_b
         frames.append(recovered - recovered[-1] - deviation)
-    return PathMorph(grid, times, np.array(frames), "elasticpath2path")
+    return PathMorph(grid, times, np.array(frames), "elasticpath2path", a.copy(), b.copy())
 
 
 def curve_to_srvf(curve: np.ndarray, parameter: np.ndarray | None = None) -> np.ndarray:
@@ -226,40 +230,68 @@ def interpolate_paths(first: np.ndarray, second: np.ndarray, *,
                   + times[:, None, None] * second[0])
     frames = np.concatenate((np.zeros_like(origin), np.cumsum(increments, axis=1)), axis=1)
     frames += origin
-    return PathMorph(grid, times, frames, "paper")
+    source_curve = a - a[0] if center else a.copy()
+    target_curve = b - b[0] if center else b.copy()
+    return PathMorph(grid, times, frames, "paper", source_curve, target_curve)
 
 
 def morph_neurons(first: Morphology | np.ndarray, second: Morphology | np.ndarray, *,
                    times: np.ndarray | None = None, samples: int | None = 128,
                    mode: str = "inter", axis_order: str = "original",
                    method: str = "paper",
+                   arbor: str = "dendrite",
                    matlab_compatible: bool = False) -> NeuronMorph:
-    """Match dendritic paths and morph each pair independently as in the paper.
+    """Match selected neurite paths and morph each pair independently.
 
     Input somata are centered at zero. axis_order='range' permutes coordinates
     in descending range order per neuron, as in Fig. 6; 'original' retains axes.
     No rotation optimization, scale normalization, or shared-branch stitching
     is performed. Coincident paths at either endpoint represent merging or
     splitting, rather than the appearance/deletion of graph edges.
+    arbor='dendrite' uses tips of SWC type 3/4, 'axon' uses type 2, and 'both'
+    matches the two compartments separately. A compartment present in only one
+    input raises an error rather than matching axons to dendrites or omitting it.
     """
     first = first if isinstance(first, Morphology) else morphology_from_array(first)
     second = second if isinstance(second, Morphology) else morphology_from_array(second)
     if axis_order not in {"range", "original"}:
         raise ValueError("axis_order must be 'range' or 'original'")
     times = _times(times)
-    fa, fb = extract_features(first), extract_features(second)
-    matching = compute_distance(fa, fb, mode=mode, matlab_compatible=matlab_compatible)
-    pairs = matching.pairs.copy()
-    # The source outlier reassignment can orphan a smaller-arbor path. Include
-    # its cheapest partner so the morph represents all paths at both endpoints.
-    additional = []
-    for i in np.setdiff1d(np.arange(fa.path_count), pairs[:, 0]):
-        additional.append((int(i), int(np.argmin(matching.cost_matrix[i]))))
-    for j in np.setdiff1d(np.arange(fb.path_count), pairs[:, 1]):
-        additional.append((int(np.argmin(matching.cost_matrix[:, j])), int(j)))
-    added_pairs = np.asarray(additional, dtype=np.int64).reshape(-1, 2)
-    if len(added_pairs):
-        pairs = np.vstack((pairs, added_pairs))
+    fa, fb = extract_features(first, arbor=arbor), extract_features(second, arbor=arbor)
+    kinds = []
+    for tree, features in ((first, fa), (second, fb)):
+        types = {int(row[0]): int(row[1]) for row in tree.nodes}
+        kinds.append(np.array(["axon" if types[int(path.node_ids[-1])] == 2 else "dendrite"
+                               for path in features.paths], dtype=str))
+    groups = ("dendrite", "axon") if arbor == "both" else (arbor,)
+    all_pairs, all_added, pair_kinds = [], [], []
+    for kind in groups:
+        ia, ib = np.flatnonzero(kinds[0] == kind), np.flatnonzero(kinds[1] == kind)
+        if not len(ia) and not len(ib) and arbor == "both":
+            continue
+        if not len(ia) or not len(ib):
+            description = "axonal paths (SWC type 2)" if kind == "axon" else "dendritic paths (SWC types 3/4)"
+            raise ValueError(f"Both morphologies need {description}; "
+                             f"found source={len(ia)}, target={len(ib)}")
+        matching = compute_distance([fa.paths[i] for i in ia], [fb.paths[j] for j in ib],
+                                    mode=mode, matlab_compatible=matlab_compatible)
+        pairs = matching.pairs.copy()
+        # Repair any paths orphaned by outlier reassignment within this compartment.
+        additional = []
+        for i in np.setdiff1d(np.arange(len(ia)), pairs[:, 0]):
+            additional.append((int(i), int(np.argmin(matching.cost_matrix[i]))))
+        for j in np.setdiff1d(np.arange(len(ib)), pairs[:, 1]):
+            additional.append((int(np.argmin(matching.cost_matrix[:, j])), int(j)))
+        if additional:
+            added = np.asarray(additional, dtype=np.int64)
+            pairs = np.vstack((pairs, added))
+            all_added.extend(zip(ia[added[:, 0]], ib[added[:, 1]]))
+        all_pairs.extend(zip(ia[pairs[:, 0]], ib[pairs[:, 1]]))
+        pair_kinds.extend([kind] * len(pairs))
+    if not all_pairs:
+        raise ValueError("Both morphologies need selected neurite paths (SWC types 2/3/4)")
+    pairs = np.asarray(all_pairs, dtype=np.int64)
+    added_pairs = np.asarray(all_added, dtype=np.int64).reshape(-1, 2)
 
     roots = [tree.nodes[tree.root, 2:5].copy() for tree in (first, second)]
     axes, curves = [], []
@@ -276,15 +308,40 @@ def morph_neurons(first: Morphology | np.ndarray, second: Morphology | np.ndarra
     return NeuronMorph(times, pairs, paths, added_pairs,
                        tuple(p.node_ids.copy() for p in fa.paths),
                        tuple(p.node_ids.copy() for p in fb.paths),
-                       roots[0], roots[1], axes[0], axes[1], method)
+                       roots[0], roots[1], axes[0], axes[1], method, arbor, tuple(pair_kinds))
+
+
+def _endpoint_curves(morph: NeuronMorph, side: str, fraction: float,
+                     column: int) -> list[np.ndarray]:
+    curves, seen = [], set()
+    for pair, path in zip(morph.pairs, morph.paths):
+        index = int(pair[column])
+        if index in seen:
+            continue
+        seen.add(index)
+        curve = getattr(path, side)
+        if curve is None:
+            # Support previously constructed PathMorph objects that include endpoints.
+            frames = np.flatnonzero(path.times == fraction)
+            if not len(frames):
+                raise ValueError("Endpoint references are missing; regenerate the morph "
+                                 "with morph_neurons or include times 0 and 1")
+            curve = path.frames[frames[0]]
+        curves.append(curve)
+    return curves
 
 
 def write_morph_html(morph: NeuronMorph, destination: str | Path) -> Path:
-    """Write a standalone interactive 3D path animation; no browser/CDN required."""
+    """Write synchronized source, intermediate, and target views in standalone HTML."""
     if not morph.paths:
         raise ValueError("Morph must contain paths")
+
     payload = json.dumps({"times": morph.times.tolist(),
+                          "arbor": morph.arbor,
+                          "path_kinds": morph.path_kinds,
                           "pairs": morph.pairs.tolist(),
+                          "source": [c.tolist() for c in _endpoint_curves(morph, "source_curve", 0, 0)],
+                          "target": [c.tolist() for c in _endpoint_curves(morph, "target_curve", 1, 1)],
                           "paths": [path.frames.tolist() for path in morph.paths]},
                          separators=(",", ":"), allow_nan=False)
     destination = Path(destination)
@@ -294,31 +351,51 @@ def write_morph_html(morph: NeuronMorph, destination: str | Path) -> Path:
 <title>NeuroPath2Path — path morphing</title>
 <style>
 body{margin:0;background:#f4f6f8;color:#172b3a;font:16px system-ui,sans-serif}
-main{max-width:1100px;margin:auto;padding:20px}h1{font-size:24px;margin:0 0 8px}
-canvas{width:100%;height:65vh;background:white;border-radius:8px;touch-action:none}
-.controls{display:flex;gap:14px;align-items:center;padding:16px 0}input{flex:1}
+main{max-width:1500px;margin:auto;padding:20px}h1{font-size:24px;margin:0 0 8px}
+.views{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.view{background:white;border-radius:8px;overflow:hidden}
+h2{font-size:16px;margin:0;padding:12px 16px;border-bottom:1px solid #edf0f3}
+#source-title{color:#2563eb}#target-title{color:#c2410c}
+canvas{display:block;width:100%;height:48vh;min-height:240px;touch-action:none}
+.controls{display:flex;gap:14px;align-items:center;padding:16px 0}input[type=range]{flex:1;min-width:60px}
+.overlay{display:flex;align-items:center;gap:6px;margin-bottom:12px;font-size:14px}
+@media(max-width:700px){.views{grid-template-columns:1fr}canvas{height:32vh}.controls{flex-wrap:wrap}}
 button{padding:8px 18px;font:inherit}p{line-height:1.5}small{color:#475867}
 </style><main><h1>NeuroPath2Path — path morphing</h1>
-<p>SRVF interpolation of matched dendritic paths. Drag to rotate; scroll to zoom.</p>
-<canvas aria-label="Interactive 3D paths"></canvas>
+<p>Compare the current morph with both cells. All views share the same scale.
+Drag any view to rotate all three; scroll to zoom.</p>
+<p id="arbor-label"></p>
+<div class="views">
+<section class="view"><h2 id="source-title">Source · α = 0</h2>
+<canvas id="source" aria-label="Source cell at alpha zero"></canvas></section>
+<section class="view"><h2 id="current-title">Current morph</h2>
+<canvas id="current" aria-label="Intermediate morphed cell"></canvas></section>
+<section class="view"><h2 id="target-title">Target · α = 1</h2>
+<canvas id="target" aria-label="Target cell at alpha one"></canvas></section>
+</div>
 <div class="controls"><button id="play">Play</button>
 <input id="frame" aria-label="Morph fraction" type="range" min="0" value="0" step="1">
 <output id="label"></output></div>
+<label class="overlay"><input id="overlay" type="checkbox">Overlay source (blue) and target (orange) on the current morph</label>
 <small>Colored lines track matched paths. Paths evolve independently; this view
     does not define a branching SWC topology. Input somata are centered at the
 origin; intermediate roots may drift with the original reconstruction method.</small></main>
 <script>
 const data=__MORPH_DATA__;
-const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d');
+document.querySelector('#arbor-label').textContent={dendrite:'Showing dendritic paths',axon:'Showing axonal paths',both:'Showing dendritic and axonal paths'}[data.arbor];
+const canvases=['source','current','target'].map(id=>document.getElementById(id));
 const slider=document.querySelector('#frame'),label=document.querySelector('#label');
+const overlay=document.querySelector('#overlay');
 const play=document.querySelector('#play');slider.max=data.times.length-1;
 let yaw=0.4,pitch=-0.3,zoom=1,timer=null,drag=null;
 let low=[Infinity,Infinity,Infinity],high=[-Infinity,-Infinity,-Infinity];
 for(const path of data.paths)for(const frame of path)for(const p of frame)
  for(let d=0;d<3;d++){low[d]=Math.min(low[d],p[d]);high[d]=Math.max(high[d],p[d]);}
+for(const curve of [...data.source,...data.target])for(const p of curve)
+ for(let d=0;d<3;d++){low[d]=Math.min(low[d],p[d]);high[d]=Math.max(high[d],p[d]);}
 const center=low.map((v,d)=>(v+high[d])/2);
 const radius=Math.max(1e-12,Math.hypot(...high.map((v,d)=>v-low[d]))/2);
-function project(p){
+function project(p,canvas){
  const [x,y,z]=p.map((v,d)=>v-center[d]);
  const a=Math.cos(yaw)*x+Math.sin(yaw)*z;
  const b=-Math.sin(yaw)*x+Math.cos(yaw)*z;
@@ -330,24 +407,39 @@ function project(p){
 }
 function draw(){
  const ratio=window.devicePixelRatio||1;
- canvas.width=Math.round(canvas.clientWidth*ratio);canvas.height=Math.round(canvas.clientHeight*ratio);
- ctx.clearRect(0,0,canvas.width,canvas.height);ctx.lineWidth=1.6*ratio;
  const frame=Number(slider.value);
- data.paths.forEach((path,index)=>{
-  ctx.strokeStyle=`hsl(${index*137.508%360} 65% 40%)`;ctx.beginPath();
-  path[frame].forEach((p,i)=>{const [x,y]=project(p);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});
-  ctx.stroke();
+ canvases.forEach((canvas,panel)=>{
+  canvas.width=Math.round(canvas.clientWidth*ratio);canvas.height=Math.round(canvas.clientHeight*ratio);
+  const ctx=canvas.getContext('2d');ctx.clearRect(0,0,canvas.width,canvas.height);
+  function stroke(curves,color,opacity=1){
+   ctx.globalAlpha=opacity;ctx.lineWidth=(opacity<1?1.2:1.6)*ratio;
+   curves.forEach((curve,index)=>{
+    ctx.strokeStyle=color||`hsl(${index*137.508%360} 65% 40%)`;ctx.beginPath();
+    curve.forEach((p,i)=>{const [x,y]=project(p,canvas);if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);});
+    ctx.stroke();
+   });ctx.globalAlpha=1;
+  }
+  if(panel===0)stroke(data.source,'#2563eb');
+  else if(panel===2)stroke(data.target,'#c2410c');
+  else{
+   if(overlay.checked){stroke(data.source,'#2563eb',0.2);stroke(data.target,'#c2410c',0.2);}
+   stroke(data.paths.map(path=>path[frame]),null);
+  }
+  const [x,y]=project([0,0,0],canvas);ctx.fillStyle='#172b3a';ctx.beginPath();ctx.arc(x,y,3*ratio,0,2*Math.PI);ctx.fill();
  });
- const [x,y]=project([0,0,0]);ctx.fillStyle='#172b3a';ctx.beginPath();ctx.arc(x,y,3*ratio,0,2*Math.PI);ctx.fill();
+ document.querySelector('#current-title').textContent=`Current morph · α = ${data.times[frame].toFixed(3)}`;
  label.textContent=`α = ${data.times[frame].toFixed(3)} · ${data.paths.length} matched pairs`;
 }
 slider.oninput=draw;
+overlay.onchange=draw;
 play.onclick=()=>{if(timer){clearInterval(timer);timer=null;play.textContent='Play';}
  else{play.textContent='Pause';timer=setInterval(()=>{slider.value=(Number(slider.value)+1)%data.times.length;draw();},120);}};
+canvases.forEach(canvas=>{
 canvas.onpointerdown=e=>{drag=[e.clientX,e.clientY];canvas.setPointerCapture(e.pointerId);};
 canvas.onpointermove=e=>{if(drag){yaw+=(e.clientX-drag[0])*0.01;pitch+=(e.clientY-drag[1])*0.01;drag=[e.clientX,e.clientY];draw();}};
 canvas.onpointerup=canvas.onpointercancel=()=>{drag=null;};
 canvas.onwheel=e=>{e.preventDefault();zoom=Math.max(0.1,Math.min(10,zoom*Math.exp(-e.deltaY*0.001)));draw();};
+});
 window.onresize=draw;draw();
 </script></html>"""
     destination.write_text(template.replace("__MORPH_DATA__", payload), encoding="utf-8")

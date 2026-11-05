@@ -51,13 +51,17 @@ def path_concurrence(morphology: Morphology, counts: np.ndarray, node: int) -> n
     return counts
 
 
-def extract_features(data: Morphology | np.ndarray) -> NeuronFeatures:
+def extract_features(data: Morphology | np.ndarray, *, arbor: str = "dendrite") -> NeuronFeatures:
     """Extract seven per-segment descriptors and root-to-tip node IDs.
 
-    Terminal types 3 and 4 define dendritic paths, as in MATLAB. Axon-only
-    arbors return zero paths. Axonal branches still participate in node degree
-    and branch-angle calculations, matching the original algorithm.
+    arbor='dendrite' selects terminal types 3 and 4, as in MATLAB. 'axon'
+    selects type 2, and 'both' selects types 2, 3, and 4. All branches still
+    participate in node degree and branch-angle calculations. Selection follows
+    terminal type; each selected path includes all ancestors back to the soma.
     """
+    terminal_types = {"dendrite": (3, 4), "axon": (2,), "both": (2, 3, 4)}
+    if arbor not in terminal_types:
+        raise ValueError("arbor must be 'dendrite', 'axon', or 'both'")
     tree = data if isinstance(data, Morphology) else morphology_from_array(data)
     root = tree.root
     nodes = tree.nodes
@@ -66,7 +70,7 @@ def extract_features(data: Morphology | np.ndarray) -> NeuronFeatures:
     coords = coords[:, np.argsort(np.ptp(coords, axis=0), kind="stable")]
     degree = np.array([len(c) + int(i != root) for i, c in enumerate(tree.children)])
     tips = [i for i in range(len(nodes))
-            if i != root and degree[i] == 1 and nodes[i, 1] in (3, 4)]
+            if i != root and degree[i] == 1 and nodes[i, 1] in terminal_types[arbor]]
     if not tips:
         return NeuronFeatures((), 0.0, 0)
 
@@ -142,7 +146,7 @@ def extract_features(data: Morphology | np.ndarray) -> NeuronFeatures:
                           max(len(p.hierarchy) for p in paths))
 
 
-def compute_np2p(data: Morphology | np.ndarray) -> tuple[tuple[PathFeatures, ...], int, float, int]:
+def compute_np2p(data: Morphology | np.ndarray, *, arbor: str = "dendrite") -> tuple[tuple[PathFeatures, ...], int, float, int]:
     """Four-return counterpart of computenP2P.m."""
-    result = extract_features(data)
+    result = extract_features(data, arbor=arbor)
     return result.paths, result.path_count, result.average_path_length, result.max_order

@@ -17,6 +17,7 @@ from .distance import compute_distance
 from .features import FEATURE_NAMES, extract_features
 from .io import read_swc
 from .morphing import morph_neurons, write_morph_html
+from .video import write_morph_video
 from .weights import learn_dataset_weights
 
 
@@ -71,9 +72,17 @@ def build_parser() -> argparse.ArgumentParser:
     morph.add_argument("--frames", type=int, default=21)
     morph.add_argument("--samples", type=int, default=128)
     morph.add_argument("--axis-order", choices=["original", "range"], default="original")
+    morph.add_argument("--arbor", choices=["dendrite", "axon", "both"], default="dendrite",
+                       help="Select dendrites (default), axons, or both with separate matching")
     morph.add_argument("--matlab-compatible", action="store_true",
                        help="Use the original NeuroPath2Path tortuosity formula for matching")
     morph.add_argument("--html", type=Path, help="Also save a standalone 3D animation with a slider")
+    morph.add_argument("--video", type=Path, help="Also export a presentation-ready H.264 MP4")
+    morph.add_argument("--video-overlay", action=argparse.BooleanOptionalAction, default=True,
+                       help="Overlay source and target on the current morph in MP4 exports (default: on)")
+    morph.add_argument("--fps", type=float, default=12, help="Video frames per second (default: 12)")
+    morph.add_argument("--hold-seconds", type=float, default=1,
+                       help="Extra pause at each end of the video (default: 1 second)")
 
     extract = commands.add_parser("extract", help="Summarize/extract a directory or ZIP dataset")
     extract.add_argument("--include-paths", action="store_true", help="Include all per-path arrays")
@@ -117,10 +126,15 @@ def main(argv: list[str] | None = None) -> int:
             result = morph_neurons(read_swc(args.first), read_swc(args.second),
                                    times=np.linspace(0, 1, args.frames), samples=args.samples,
                                    mode=args.mode, axis_order=args.axis_order, method=args.method,
+                                   arbor=args.arbor,
                                    matlab_compatible=args.matlab_compatible)
             if args.html:
                 write_morph_html(result, args.html)
                 _progress(f"Saved interactive animation: {args.html}")
+            if args.video:
+                write_morph_video(result, args.video, fps=args.fps, hold_seconds=args.hold_seconds,
+                                  overlay=args.video_overlay)
+                _progress(f"Saved MP4 video: {args.video}")
         else:
             progress = None if args.quiet else _progress
             dataset = load_dataset(args.dataset, limit_per_class=args.limit_per_class,

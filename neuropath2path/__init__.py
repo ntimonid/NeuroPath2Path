@@ -18,6 +18,7 @@ from .morphing import (
     NeuronMorph, PathMorph, curve_to_q, curve_to_srvf, interpolate_paths,
     morph_neurons, q_to_curve, resample_path, srvf_to_curve, write_morph_html,
 )
+from .video import write_morph_video
 from .weights import (
     WeightFit, fit_feature_weights, get_distance_vec_assembly, get_feature_weights,
     learn_dataset_weights,
@@ -37,4 +38,5 @@ __all__ = [
     "path_distances", "read_input", "read_swc", "stratified_split",
     "NeuronMorph", "PathMorph", "curve_to_q", "curve_to_srvf", "interpolate_paths",
     "morph_neurons", "q_to_curve", "resample_path", "srvf_to_curve", "write_morph_html",
+    "write_morph_video",
 ]

@@ -44,7 +44,13 @@ python -m neuropath2path morph first.swc second.swc \
 ```
 
 Open `results/morph.html` in a browser to play/scrub the animation, drag to
-rotate, and scroll to zoom. The HTML is standalone and needs no web service.
+rotate, and scroll to zoom. Source and target cells remain visible beside the
+current morph, with synchronized rotation/zoom and a common coordinate scale.
+An optional overlay shows faint blue source and orange target outlines on the
+current morph. Endpoint references are retained even for a single requested
+fraction such as `times=[0.4]`. Regenerate an existing HTML file with
+`write_morph_html` to use the updated viewer. The HTML is standalone and needs
+no web service.
 JSON contains the intermediate coordinates, morph fractions, original node
 IDs, and zero-based source/target path pairs. See
 [notebooks/path_morphing.ipynb](notebooks/path_morphing.ipynb) for a runnable
@@ -112,6 +118,69 @@ For two curves already paired, use `interpolate_paths(first_xyz, second_xyz)`.
 `curve_to_q`, `q_to_curve`, and `resample_path` expose the earlier tool's
 numerical conventions; `curve_to_srvf` and `srvf_to_curve` expose the interval
 representation.
+
+### Axons and dendrites
+
+Morphing defaults to dendritic paths, selected by terminal SWC types 3 and 4.
+Use `arbor="axon"` for type 2 terminals, or `arbor="both"` to morph axons and
+dendrites together:
+
+```python
+morph = morph_neurons(first, second, arbor="both", method="paper",
+                     times=np.linspace(0, 1, 21), samples=128)
+write_morph_html(morph, "results/whole_cell.html")
+```
+
+The CLI equivalents are `--arbor axon` and `--arbor both`. Both HTML and MP4
+exports support these results. In combined mode, paths are matched separately
+within each compartment: axons map to axons, dendrites to dendrites. Every
+matched pair has a label in `morph.path_kinds`; its indices refer to
+`source_node_ids` and `target_node_ids` for the selected paths.
+
+Both SWCs must contain the requested compartment with correct type labels.
+A compartment absent from both inputs is skipped in combined mode; if it is
+present in only one input, morphing raises a clear error rather than dropping
+it or inventing a counterpart. Each selected path follows its ancestors all
+the way to the root, even if a proximal ancestor has a different SWC type.
+`extract_features(..., arbor="axon")` also supports axonal feature extraction;
+dataset classification retains its existing dendritic default.
+
+Axonal morphing is an extension of the implementation: the same SRVF
+interpolation applies to 3D axonal curves, but the default matching weights
+come from the dendritic workflow and have not been independently validated
+for axonal correspondence. Intermediate results remain path collections,
+rather than a connected SWC skeleton.
+
+### MP4 export for PowerPoint
+
+Video export uses optional Matplotlib (`python -m pip install -e '.[video]'`)
+and a system FFmpeg installation with the libx264 encoder. It creates a silent
+H.264 MP4 with source, current morph, and target views, a fixed camera and
+shared scale, and a pause at both ends. Faint blue source and orange target
+outlines are overlaid on the current morph by default. Set `overlay=False` in
+`write_morph_video` or pass `--no-video-overlay` on the CLI to turn them off.
+The default resolution is 1920×1080.
+
+From a notebook with an existing `morph` result:
+
+```python
+from neuropath2path import write_morph_video
+write_morph_video(morph, ROOT / "results" / "path_morph.mp4", fps=6, hold_seconds=1)
+```
+
+Or generate more morph frames and export from the command line:
+
+```bash
+python -m neuropath2path morph first.swc second.swc --method paper \
+  --frames 121 --fps 24 --video results/morph.mp4 --output results/morph.json
+```
+
+Each requested morph time becomes one video frame. Increase `--frames` for a
+smoother transition; `--fps` controls playback speed, and `--hold-seconds`
+controls extra pauses at the first and last requested frames. The fixed video
+camera uses the viewer's initial angle, rather than any subsequent browser
+rotation. Insert the MP4 into PowerPoint using **Insert → Video → This Device**
+(menu wording varies by platform), then choose playback and looping options.
 
 ## Classification
 

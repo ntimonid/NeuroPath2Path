@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.23", "scipy>=1.9"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+video = ["matplotlib>=3.6"]
 
 [project.scripts]
 neuropath2path = "neuropath2path.cli:main"
