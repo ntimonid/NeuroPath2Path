@@ -44,7 +44,13 @@ python -m neuropath2path morph first.swc second.swc \
 ```
 
 Open `results/morph.html` in a browser to play/scrub the animation, drag to
-rotate, and scroll to zoom. The HTML is standalone and needs no web service.
+rotate, and scroll to zoom. Source and target cells remain visible beside the
+current morph, with synchronized rotation/zoom and a common coordinate scale.
+An optional overlay shows faint blue source and orange target outlines on the
+current morph. Endpoint references are retained even for a single requested
+fraction such as `times=[0.4]`. Regenerate an existing HTML file with
+`write_morph_html` to use the updated viewer. The HTML is standalone and needs
+no web service.
 JSON contains the intermediate coordinates, morph fractions, original node
 IDs, and zero-based source/target path pairs. See
 [notebooks/path_morphing.ipynb](notebooks/path_morphing.ipynb) for a runnable

@@ -162,5 +162,28 @@ def test_original_elasticpath2path_intermediate_frames(case):
                         reference[f"q_first_{case}"], atol=1e-12)
         assert_allclose(curve_to_q(sampled_second, 1 / (samples - 1)),
                         reference[f"q_second_{case}"], atol=1e-12)
-        result = interpolate_paths(first, second, times=times, samples=samples)
+        result = interpolate_paths(first, second, times=times, samples=samples,
+                                   method="elasticpath2path")
         assert_allclose(result.frames, reference[f"frames_{case}"], atol=1e-11, rtol=1e-12)
+
+
+@pytest.mark.parametrize("method", ["paper", "elasticpath2path"])
+@pytest.mark.parametrize("times", [[0.4], [0.8, 0.2], [1, 0]])
+def test_viewer_keeps_true_endpoints_without_endpoint_frames(branched_tree, tmp_path, method, times):
+    target = branched_tree.nodes.copy()
+    target[:, 2:5] *= [3, 2, 1]
+    # Three target paths matched to two source paths also tests reference deduplication.
+    target = np.vstack((target, [5, 3, 4, 3, 1, 1, 2]))
+    morph = morph_neurons(branched_tree, target, times=times, samples=16, method=method)
+    endpoints = morph_neurons(branched_tree, target, times=[0, 1], samples=16, method=method)
+    html = write_morph_html(morph, tmp_path / "viewer.html").read_text()
+    payload = json.loads(html.split("const data=", 1)[1].split(";\n", 1)[0])
+    assert payload["times"] == times
+    assert len(payload["source"]) == len(morph.source_node_ids) == 2
+    assert len(payload["target"]) == len(morph.target_node_ids) == 3
+    for column, name, endpoint_frame in [(0, "source", 0), (1, "target", 1)]:
+        indices = list(dict.fromkeys(morph.pairs[:, column]))
+        for curve, path_index in zip(payload[name], indices):
+            pair_index = np.flatnonzero(morph.pairs[:, column] == path_index)[0]
+            assert_allclose(curve, endpoints.paths[pair_index].frames[endpoint_frame], atol=1e-12)
+    assert all(len(frames) == len(times) for frames in payload["paths"])
